@@ -119,19 +119,28 @@ async def submit_contact_form(request: ContactFormRequest):
         )
 
         doc = submission.model_dump()
-        doc['timestamp'] = doc['timestamp'].isoformat()
+        doc["timestamp"] = submission.timestamp.isoformat()
 
+        # DEFAULT STATUS
+        db_success = False
+        
         # Store in Supabase
         if supabase_available:
             try:
-                supabase_client.table("contact_submissions").insert(doc).execute()
-                logger.info(f"Contact saved to Supabase for {request.email}")
+                result = supabase_client.table("contact_submissions").insert(doc).execute()
+
+                if hasattr(result, "error") and result.error:
+                    logger.error(f"Supabase error: {result.error}")
+                else:
+                    db_success = True
+                    logger.info(f"Contact saved to Supabase for {request.email}")
+
             except Exception as db_err:
                 logger.warning(f"Supabase insert failed: {db_err}")
                 contact_submissions_store.append(doc)
-        else:
-            contact_submissions_store.append(doc)
-            logger.info(f"Contact saved in-memory for {request.email} (Supabase not configured)")
+    else:
+        contact_submissions_store.append(doc)
+        logger.info(f"Contact saved in-memory for {request.email} (Supabase not configured)")
 
         # Send email via Resend
         html_content = f"""
@@ -217,4 +226,5 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
 logger = logging.getLogger(__name__)
