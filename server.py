@@ -138,9 +138,9 @@ async def submit_contact_form(request: ContactFormRequest):
             except Exception as db_err:
                 logger.warning(f"Supabase insert failed: {db_err}")
                 contact_submissions_store.append(doc)
-    else:
-        contact_submissions_store.append(doc)
-        logger.info(f"Contact saved in-memory for {request.email} (Supabase not configured)")
+        else:
+            contact_submissions_store.append(doc)
+            logger.info(f"Contact saved in-memory for {request.email} (Supabase not configured)")
 
         # Send email via Resend
         html_content = f"""
