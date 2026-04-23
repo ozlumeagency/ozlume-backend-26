@@ -11,8 +11,7 @@ from typing import List, Optional
 import uuid
 from datetime import datetime, timezone
 
-# TOP of file — yeh add karo
-import logging
+# ==================== LOGGING (EK HI BAAR) ====================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# Supabase setup
+# ==================== SUPABASE SETUP ====================
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 
@@ -34,18 +33,23 @@ try:
         from supabase import create_client
         supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
         supabase_available = True
+        logger.info("Supabase connected successfully")
 except Exception as e:
-    logging.warning(f"Supabase not available: {e}. Contact form will still send emails.")
+    logger.warning(f"Supabase not available: {e}. Contact form will still send emails.")
 
-# Resend API setup
+# ==================== RESEND SETUP ====================
 resend.api_key = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 RECIPIENT_EMAIL = os.environ.get('RECIPIENT_EMAIL', 'ejazhamza28@gmail.com')
 
+logger.info(f"Resend API Key configured: {bool(resend.api_key)}")
+logger.info(f"Sender: {SENDER_EMAIL}, Recipient: {RECIPIENT_EMAIL}")
+
+# ==================== FASTAPI APP ====================
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
-# Models
+# ==================== MODELS ====================
 class StatusCheck(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -70,12 +74,13 @@ class ContactSubmission(BaseModel):
     whatsapp: str
     company: Optional[str] = None
     message: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-# In-memory fallback when Supabase is not configured
+# ==================== IN-MEMORY STORES ====================
 status_checks_store = []
 contact_submissions_store = []
 
+# ==================== ROUTES ====================
 @api_router.get("/")
 async def root():
     return {"message": "Hello World"}
@@ -120,26 +125,23 @@ async def submit_contact_form(request: ContactFormRequest):
     logger.info(f"Contact form received from {request.email}")
     
     try:
-        submission = ContactSubmission(
-            name=request.name,
-            email=request.email,
-            whatsapp=request.whatsapp,
-            company=request.company,
-            message=request.message
-        )
-
-        doc = submission.model_dump()
-        doc["timestamp"] = submission.timestamp.isoformat()
+        # Build document matching Supabase schema
+        doc = {
+            "id": str(uuid.uuid4()),
+            "name": request.name,
+            "email": request.email,
+            "whatsapp": request.whatsapp,
+            "company": request.company,
+            "message": request.message,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
 
         # Store in Supabase
-        db_success = False
-        
         if supabase_available:
             try:
                 logger.info(f"Attempting Supabase insert for {request.email}")
                 result = supabase_client.table("contact_submissions").insert(doc).execute()
-                logger.info(f"Supabase insert result: {result}")
-                db_success = True
+                logger.info(f"Supabase insert successful: {result.data}")
             except Exception as db_err:
                 logger.error(f"Supabase insert FAILED: {db_err}")
                 contact_submissions_store.append(doc)
@@ -149,10 +151,7 @@ async def submit_contact_form(request: ContactFormRequest):
 
         # Send email via Resend
         logger.info(f"Attempting to send email for {request.email}")
-        logger.info(f"Resend API Key set: {bool(resend.api_key)}")
-        logger.info(f"Sender: {SENDER_EMAIL}, Recipient: {RECIPIENT_EMAIL}")
-
-        # Send email via Resend
+        
         html_content = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
             <h2 style="color: #00A3A8; border-bottom: 2px solid #00A3A8; padding-bottom: 10px;">
@@ -198,6 +197,8 @@ async def submit_contact_form(request: ContactFormRequest):
             logger.info(f"Email sent successfully: {email_response}")
         except Exception as email_error:
             logger.error(f"Email sending FAILED: {str(email_error)}")
+            # Optional: agar email zaroori hai toh error raise karo
+            # raise HTTPException(status_code=500, detail="Failed to send email notification")
 
         return {
             "status": "success",
@@ -212,7 +213,7 @@ async def submit_contact_form(request: ContactFormRequest):
 async def get_contact_submissions():
     if supabase_available:
         try:
-            result = supabase_client.table("contact_submissions").select("*").order("timestamp", desc=True).execute()
+            result = supabase_client.table("contact_submissions").select("*").order("created_at", desc=True).execute()
             return {"submissions": result.data or []}
         except Exception as e:
             logger.warning(f"Supabase query failed: {e}")
@@ -220,8 +221,8 @@ async def get_contact_submissions():
 
 app.include_router(api_router)
 
+# ==================== CORS ====================
 cors_origins = os.environ.get("CORS_ORIGINS", "*")
-
 origins = cors_origins.split(",") if cors_origins else ["*"]
 
 app.add_middleware(
@@ -231,3 +232,5 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logger.info("Server started successfully")
