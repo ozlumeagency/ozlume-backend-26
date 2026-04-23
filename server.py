@@ -117,6 +117,8 @@ async def get_status_checks():
 
 @api_router.post("/contact")
 async def submit_contact_form(request: ContactFormRequest):
+    logger.info(f"Contact form received from {request.email}")
+    
     try:
         submission = ContactSubmission(
             name=request.name,
@@ -129,26 +131,26 @@ async def submit_contact_form(request: ContactFormRequest):
         doc = submission.model_dump()
         doc["timestamp"] = submission.timestamp.isoformat()
 
-        # DEFAULT STATUS
+        # Store in Supabase
         db_success = False
         
-        # Store in Supabase
         if supabase_available:
             try:
+                logger.info(f"Attempting Supabase insert for {request.email}")
                 result = supabase_client.table("contact_submissions").insert(doc).execute()
-
-                if hasattr(result, "error") and result.error:
-                    logger.error(f"Supabase error: {result.error}")
-                else:
-                    db_success = True
-                    logger.info(f"Contact saved to Supabase for {request.email}")
-
+                logger.info(f"Supabase insert result: {result}")
+                db_success = True
             except Exception as db_err:
-                logger.warning(f"Supabase insert failed: {db_err}")
+                logger.error(f"Supabase insert FAILED: {db_err}")
                 contact_submissions_store.append(doc)
         else:
+            logger.warning("Supabase not available, using in-memory store")
             contact_submissions_store.append(doc)
-            logger.info(f"Contact saved in-memory for {request.email} (Supabase not configured)")
+
+        # Send email via Resend
+        logger.info(f"Attempting to send email for {request.email}")
+        logger.info(f"Resend API Key set: {bool(resend.api_key)}")
+        logger.info(f"Sender: {SENDER_EMAIL}, Recipient: {RECIPIENT_EMAIL}")
 
         # Send email via Resend
         html_content = f"""
@@ -192,10 +194,10 @@ async def submit_contact_form(request: ContactFormRequest):
         }
 
         try:
-            await asyncio.to_thread(resend.Emails.send, params)
-            logger.info(f"Contact form email sent for {request.email}")
+            email_response = await asyncio.to_thread(resend.Emails.send, params)
+            logger.info(f"Email sent successfully: {email_response}")
         except Exception as email_error:
-            logger.error(f"Failed to send email notification: {str(email_error)}")
+            logger.error(f"Email sending FAILED: {str(email_error)}")
 
         return {
             "status": "success",
@@ -203,7 +205,7 @@ async def submit_contact_form(request: ContactFormRequest):
         }
 
     except Exception as e:
-        logger.error(f"Contact form submission failed: {str(e)}")
+        logger.error(f"Contact form submission FAILED: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to submit contact form. Please try again.")
 
 @api_router.get("/submissions")
